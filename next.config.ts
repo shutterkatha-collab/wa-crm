@@ -136,6 +136,14 @@ const nextConfig: NextConfig = {
    * they apply to every response regardless of which cache rule
    * matched.
    */
+  async rewrites() {
+    return [
+      {
+        source: "/_supabase/:path*",
+        destination: "http://127.0.0.1:54321/:path*",
+      },
+    ];
+  },
   async headers() {
     return [
       {
