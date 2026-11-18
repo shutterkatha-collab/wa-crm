@@ -35,16 +35,24 @@ import { invalidateAiAccountStatus } from '@/lib/ai/account-status-cache';
 
 const MASKED_KEY = '••••••••••••••••';
 
+type UiProvider = 'gemini' | 'openai' | 'anthropic' | 'openai_compatible';
+
+const GEMINI_BASE_URL = 'https://generativelanguage.googleapis.com/v1beta/openai/';
+const GEMINI_DEFAULT_MODEL = 'gemini-2.5-flash';
+
 // Radix Select can't use an empty-string item value, so the "leave
 // unassigned" choice gets a sentinel that maps to null in the payload.
 const HANDOFF_QUEUE = '__queue__';
 
-const PROVIDER_LABEL: Record<Exclude<AiProvider, 'openai_compatible'>, string> = {
+const PROVIDER_LABEL: Record<UiProvider, string> = {
+  gemini: 'Google Gemini',
   openai: 'OpenAI',
   anthropic: 'Anthropic (Claude)',
+  openai_compatible: 'Custom (OpenAI-compatible)',
 };
 
-const KEY_PLACEHOLDER: Record<AiProvider, string> = {
+const KEY_PLACEHOLDER: Record<UiProvider, string> = {
+  gemini: 'AIzaSy...',
   openai: 'sk-...',
   anthropic: 'sk-ant-...',
   openai_compatible: 'your-api-key',
@@ -61,9 +69,9 @@ export function AiConfig() {
   const [removing, setRemoving] = useState(false);
 
   const [configured, setConfigured] = useState(false);
-  const [provider, setProvider] = useState<AiProvider>('openai');
-  const [model, setModel] = useState(AI_PROVIDER_DEFAULT_MODEL.openai);
-  const [baseUrl, setBaseUrl] = useState('');
+  const [uiProvider, setUiProvider] = useState<UiProvider>('gemini');
+  const [model, setModel] = useState(GEMINI_DEFAULT_MODEL);
+  const [baseUrl, setBaseUrl] = useState(GEMINI_BASE_URL);
   const [apiKey, setApiKey] = useState('');
   const [keyEdited, setKeyEdited] = useState(false);
   const [showKey, setShowKey] = useState(false);
@@ -96,9 +104,14 @@ export function AiConfig() {
       }
       if (data.configured) {
         setConfigured(true);
-        setProvider(data.provider);
+        const isGemini =
+          data.provider === 'openai_compatible' &&
+          (Boolean(data.base_url?.includes('googleapis.com')) ||
+            Boolean(data.model?.toLowerCase().includes('gemini')));
+        const loadedUi: UiProvider = isGemini ? 'gemini' : (data.provider as UiProvider);
+        setUiProvider(loadedUi);
         setModel(data.model);
-        setBaseUrl(data.base_url ?? '');
+        setBaseUrl(data.base_url ?? (loadedUi === 'gemini' ? GEMINI_BASE_URL : ''));
         setSystemPrompt(data.system_prompt ?? '');
         setIsActive(data.is_active);
         setAutoReplyEnabled(data.auto_reply_enabled);
@@ -130,14 +143,21 @@ export function AiConfig() {
 
   // Swap the model default when the provider changes, unless the user
   // typed a custom model.
-  const handleProviderChange = (next: AiProvider) => {
-    setProvider(next);
-    const isDefaultModel =
-      model === AI_PROVIDER_DEFAULT_MODEL.openai ||
-      model === AI_PROVIDER_DEFAULT_MODEL.anthropic ||
-      model === AI_PROVIDER_DEFAULT_MODEL.openai_compatible ||
-      model.trim() === '';
-    if (isDefaultModel) setModel(next === 'openai_compatible' ? '' : AI_PROVIDER_DEFAULT_MODEL[next]);
+  const handleProviderChange = (next: UiProvider) => {
+    setUiProvider(next);
+    if (next === 'gemini') {
+      setModel(GEMINI_DEFAULT_MODEL);
+      setBaseUrl(GEMINI_BASE_URL);
+    } else if (next === 'openai') {
+      setModel(AI_PROVIDER_DEFAULT_MODEL.openai);
+      setBaseUrl('');
+    } else if (next === 'anthropic') {
+      setModel(AI_PROVIDER_DEFAULT_MODEL.anthropic);
+      setBaseUrl('');
+    } else {
+      setModel('');
+      setBaseUrl('');
+    }
   };
 
   const keyPayload = () => (keyEdited ? apiKey.trim() : undefined);
@@ -146,10 +166,22 @@ export function AiConfig() {
   const embeddingsKeyPayload = () =>
     embeddingsKeyEdited ? embeddingsKey.trim() || null : undefined;
 
+  const actualProvider: AiProvider = uiProvider === 'gemini' ? 'openai_compatible' : uiProvider;
+  const actualBaseUrl =
+    uiProvider === 'gemini'
+      ? GEMINI_BASE_URL
+      : actualProvider === 'openai_compatible'
+        ? baseUrl.trim()
+        : null;
+  const actualModel =
+    uiProvider === 'gemini' && !model.trim()
+      ? GEMINI_DEFAULT_MODEL
+      : model.trim();
+
   const buildBody = () => ({
-    provider,
-    model: model.trim(),
-    base_url: provider === 'openai_compatible' ? baseUrl.trim() : null,
+    provider: actualProvider,
+    model: actualModel,
+    base_url: actualBaseUrl,
     api_key: keyPayload(),
     embeddings_api_key: embeddingsKeyPayload(),
     system_prompt: systemPrompt.trim() || null,
@@ -166,9 +198,9 @@ export function AiConfig() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          provider,
-          model: model.trim(),
-          base_url: provider === 'openai_compatible' ? baseUrl.trim() : null,
+          provider: actualProvider,
+          model: actualModel,
+          base_url: actualBaseUrl,
           api_key: keyPayload(),
         }),
       });
@@ -183,11 +215,11 @@ export function AiConfig() {
   };
 
   const handleSave = async () => {
-    if (!model.trim()) {
+    if (!actualModel) {
       toast.error(t('missingModel'));
       return;
     }
-    if (provider === 'openai_compatible' && !baseUrl.trim()) {
+    if (uiProvider === 'openai_compatible' && !baseUrl.trim()) {
       toast.error(t('missingBaseUrl'));
       return;
     }
@@ -286,20 +318,21 @@ export function AiConfig() {
               <div className="space-y-2">
                 <Label>{t('provider')}</Label>
                 <Select
-                  value={provider}
-                  onValueChange={(v) => handleProviderChange(v as AiProvider)}
+                  value={uiProvider}
+                  onValueChange={(v) => handleProviderChange(v as UiProvider)}
                   disabled={disabled}
                 >
                   <SelectTrigger>
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
+                    <SelectItem value="gemini">{PROVIDER_LABEL.gemini}</SelectItem>
                     <SelectItem value="openai">{PROVIDER_LABEL.openai}</SelectItem>
                     <SelectItem value="anthropic">
                       {PROVIDER_LABEL.anthropic}
                     </SelectItem>
                     <SelectItem value="openai_compatible">
-                      {t('providerOpenAiCompatible')}
+                      {PROVIDER_LABEL.openai_compatible}
                     </SelectItem>
                   </SelectContent>
                 </Select>
@@ -311,13 +344,17 @@ export function AiConfig() {
                   id="ai-model"
                   value={model}
                   onChange={(e) => setModel(e.target.value)}
-                  placeholder={AI_PROVIDER_DEFAULT_MODEL[provider]}
+                  placeholder={
+                    uiProvider === 'gemini'
+                      ? GEMINI_DEFAULT_MODEL
+                      : AI_PROVIDER_DEFAULT_MODEL[uiProvider as AiProvider] ?? ''
+                  }
                   disabled={disabled}
                 />
               </div>
 
-              {provider === 'openai_compatible' && (
-                <div className="space-y-2">
+              {uiProvider === 'openai_compatible' && (
+                <div className="space-y-2 sm:col-span-2">
                   <Label htmlFor="ai-base-url">{t('baseUrl')}</Label>
                   <Input
                     id="ai-base-url"
@@ -328,6 +365,14 @@ export function AiConfig() {
                     autoComplete="off"
                   />
                   <p className="text-xs text-muted-foreground">{t('baseUrlHint')}</p>
+                </div>
+              )}
+
+              {uiProvider === 'gemini' && (
+                <div className="space-y-1 sm:col-span-2">
+                  <p className="rounded-md border border-primary/20 bg-primary/5 px-3 py-2 text-xs text-muted-foreground">
+                    ✨ <strong>Google Gemini Endpoint:</strong> Automatically set to <code className="text-xs text-foreground">generativelanguage.googleapis.com</code>. Recommended model: <code className="text-xs text-foreground">gemini-2.5-flash</code>. Get your API key from <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener noreferrer" className="underline text-primary">Google AI Studio</a>.
+                  </p>
                 </div>
               )}
             </div>
@@ -350,7 +395,7 @@ export function AiConfig() {
                         setKeyEdited(true);
                       }
                     }}
-                    placeholder={KEY_PLACEHOLDER[provider]}
+                    placeholder={KEY_PLACEHOLDER[uiProvider]}
                     disabled={disabled}
                     autoComplete="off"
                   />
