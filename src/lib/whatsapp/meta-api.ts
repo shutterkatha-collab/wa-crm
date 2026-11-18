@@ -246,9 +246,10 @@ export async function registerPhoneNumber(
   // Meta returns an error envelope with a code. Code 133005 + the
   // text "already registered" appears when the number is already
   // subscribed to this app — that's success from the caller's
-  // perspective, surface it as such.
+  // perspective, surface it as such. SMB accounts (connected via WhatsApp
+  // Business App) also return "Register endpoint is not available for SMB businesses".
   const error = await readMetaError(response, `Meta API error: ${response.status}`)
-  if (/already.*registered/i.test(error.message)) {
+  if (/already.*registered/i.test(error.message) || /not available for SMB/i.test(error.message)) {
     return { success: true, alreadyRegistered: true }
   }
   throw error
