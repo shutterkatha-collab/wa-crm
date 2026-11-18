@@ -454,7 +454,7 @@ export function AiConfig() {
               />
               <p className="text-xs text-muted-foreground">
                 {t('embeddingsHint', {
-                  sameKeyText: provider === 'openai' ? t('sameKeyText') : '',
+                  sameKeyText: uiProvider === 'openai' ? t('sameKeyText') : '',
                 })}
               </p>
             </div>
